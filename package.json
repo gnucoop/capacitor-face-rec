@@ -1,0 +1,51 @@
+{
+  "name": "capacitor-face-rec-plugin",
+  "version": "0.0.1",
+  "description": "Face recognition plugin for capacitor",
+  "main": "dist/esm/index.js",
+  "types": "dist/esm/index.d.ts",
+  "scripts": {
+    "build": "npm run clean && tsc",
+    "clean": "rm -rf ./dist",
+    "watch": "tsc --watch",
+    "prepublishOnly": "npm run build"
+  },
+  "author": "gnucoop",
+  "license": "MIT",
+  "dependencies": {
+    "@capacitor/core": "^1.2.0"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^1.2.0",
+    "@capacitor/ios": "^1.2.0",
+    "tslint": "^5.19.0",
+    "tslint-ionic-rules": "^0.0.21",
+    "typescript": "^3.6.2"
+  },
+  "files": [
+    "dist/",
+    "ios/",
+    "android/",
+    "FaceRec.podspec"
+  ],
+  "keywords": [
+    "capacitor",
+    "plugin",
+    "native"
+  ],
+  "capacitor": {
+    "ios": {
+      "src": "ios"
+    },
+    "android": {
+      "src": "android"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://bitbucket.org/gnucoop/capacitor-face-rec-plugin"
+  },
+  "bugs": {
+    "url": "https://bitbucket.org/gnucoop/capacitor-face-rec-plugin/issues"
+  }
+}

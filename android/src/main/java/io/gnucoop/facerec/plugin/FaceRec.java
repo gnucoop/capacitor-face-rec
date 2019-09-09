@@ -1,0 +1,591 @@
+package io.gnucoop.facerec.plugin;
+
+import android.Manifest;
+import android.app.Activity;
+import android.content.Context;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.content.SharedPreferences;
+import android.database.Cursor;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Matrix;
+import android.graphics.Paint;
+import android.graphics.Rect;
+import android.net.Uri;
+import android.os.Environment;
+import android.provider.MediaStore;
+import android.support.annotation.NonNull;
+import android.support.media.ExifInterface;
+import android.support.v4.content.FileProvider;
+import android.util.Base64;
+import android.util.Log;
+
+import com.getcapacitor.JSArray;
+import com.getcapacitor.JSObject;
+import com.getcapacitor.NativePlugin;
+import com.getcapacitor.Plugin;
+import com.getcapacitor.PluginCall;
+import com.getcapacitor.PluginMethod;
+import com.getcapacitor.PluginRequestCodes;
+import com.getcapacitor.plugin.camera.ExifWrapper;
+import com.getcapacitor.plugin.camera.ImageUtils;
+import com.google.android.gms.tasks.OnFailureListener;
+import com.google.android.gms.tasks.OnSuccessListener;
+import com.google.android.gms.tasks.Task;
+import com.google.firebase.FirebaseApp;
+import com.google.firebase.ml.vision.FirebaseVision;
+import com.google.firebase.ml.vision.common.FirebaseVisionImage;
+import com.google.firebase.ml.vision.face.FirebaseVisionFace;
+import com.google.firebase.ml.vision.face.FirebaseVisionFaceDetector;
+import com.google.firebase.ml.vision.face.FirebaseVisionFaceDetectorOptions;
+
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.List;
+import java.util.Locale;
+
+import javax.net.ssl.HttpsURLConnection;
+
+import org.tensorflow.lite.Interpreter;
+
+@NativePlugin(
+    requestCodes={FaceRec.REQUEST_IMAGE_CAPTURE, FaceRec.REQUEST_IMAGE_PICK}
+)
+public class FaceRec extends Plugin {
+    static final int REQUEST_IMAGE_CAPTURE = PluginRequestCodes.CAMERA_IMAGE_CAPTURE;
+    static final int REQUEST_IMAGE_PICK = PluginRequestCodes.CAMERA_IMAGE_PICK;
+
+    private static final int REQUEST_DOWNLOAD_MODELS = 10030;
+    private static final String MISSING_INIT_PERMISSIONS = "Missing init permissions";
+    private static final String INVALID_MODEL_URL_ERROR = "Invalid model URL";
+    private static final String INVALID_PHOTO_SOURCE = "Invalid model URL";
+    private static final String MODEL_DOWNLOAD_ERROR = "Unable to download model";
+    private static final String NO_CAMERA_ERROR = "Device doesn't have a camera available";
+    private static final String IMAGE_FILE_SAVE_ERROR = "Unable to create photo on disk";
+    private static final String IMAGE_PROCESS_NO_FILE_ERROR = "Unable to process image, file not found on disk";
+    private static final String UNABLE_TO_PROCESS_BITMAP = "Unable to process bitmap";
+    private static final String UNABLE_TO_PROCESS_IMAGE = "Unable to process image";
+    private static final String NO_IMAGE_PICKED = "No image picked";
+    private static final String OUT_OF_MEMORY = "Out of memory";
+    private static final String NO_IMAGE_FOUND = "No image found";
+
+    private static final int BUFFER_SIZE = 4096;
+    private static final String CACHE_PREFERENCES_NAME = "facerPluginCachePrefs";
+    private static final int COLOR_MALE = Color.parseColor("#6bcef5");
+    private static final int COLOR_FEMALE = Color.parseColor("#f4989d");
+    private static final int COLOR_INDETERMINATE = Color.parseColor("#c4db66");
+    private static final int BATCH_SIZE = 1;
+    private static final int PIXEL_SIZE = 3;
+    private static final int INPUT_SIZE = 64;
+
+    private FirebaseVisionFaceDetector detector;
+    private String imageFileSavePath;
+    private Uri imageFileUri;
+    private Interpreter genderModel;
+
+    @PluginMethod()
+    public void initFaceRecognition(PluginCall call) {
+        saveCall(call);
+
+        notifyInitStatus(FaceRecInitStatus.Init);
+
+        if (!checkInitPermission()) {
+            notifyInitError(MISSING_INIT_PERMISSIONS);
+            call.error(MISSING_INIT_PERMISSIONS);
+            return;
+        }
+
+        String modelUrl = call.getString("modelUrl");
+
+        try {
+            URL url = new URL(modelUrl);
+            String protocol = url.getProtocol();
+            if (!protocol.equals("https")) {
+                notifyInitError(INVALID_MODEL_URL_ERROR);
+                call.error(INVALID_MODEL_URL_ERROR);
+                return;
+            }
+
+            boolean downloaded = downloadFile(url, "gender_age_model", "model.tflite");
+
+            notifyInitStatus(FaceRecInitStatus.LoadingModel);
+
+            String modelFilePath = getFilePath("gender_age_model", "model.tflite");
+            File modelFile = new File(modelFilePath);
+
+            if (!downloaded && !modelFile.exists()) {
+                notifyInitError(MODEL_DOWNLOAD_ERROR);
+                call.error(MODEL_DOWNLOAD_ERROR);
+                return;
+            }
+            genderModel = new Interpreter(modelFile);
+
+            try{
+                FirebaseApp.getInstance();
+            }
+            catch (IllegalStateException e) {
+                FirebaseApp.initializeApp(getContext());
+            }
+
+            FirebaseVisionFaceDetectorOptions options = new FirebaseVisionFaceDetectorOptions.Builder()
+                    .setPerformanceMode(FirebaseVisionFaceDetectorOptions.FAST)
+                    .setLandmarkMode(FirebaseVisionFaceDetectorOptions.NO_LANDMARKS)
+                    .setClassificationMode(FirebaseVisionFaceDetectorOptions.NO_CLASSIFICATIONS)
+                    .build();
+
+            detector = FirebaseVision.getInstance().getVisionFaceDetector(options);
+
+            notifyInitStatus(FaceRecInitStatus.Success);
+            JSObject res = new JSObject();
+            res.put("status", FaceRecInitStatus.Success.ordinal());
+            call.success(res);
+        } catch (MalformedURLException e) {
+            notifyInitError(INVALID_MODEL_URL_ERROR);
+            call.error(INVALID_MODEL_URL_ERROR);
+        }
+    }
+
+    @PluginMethod()
+    public void getPhoto(PluginCall call) {
+        saveCall(call);
+
+        FaceRecPhotoSource source = FaceRecPhotoSource.fromInt(call.getInt("source"));
+        switch (source) {
+            case Camera:
+                getPhotoFromCamera(call);
+                break;
+            case Gallery:
+                getPhotoFromGallery(call);
+                break;
+            default:
+                call.error(INVALID_PHOTO_SOURCE);
+        }
+    }
+
+    @Override
+    protected void handleOnActivityResult(int requestCode, int resultCode, Intent data) {
+        super.handleOnActivityResult(requestCode, resultCode, data);
+
+        PluginCall savedCall = getSavedCall();
+
+        if (savedCall == null) {
+            return;
+        }
+
+        if (requestCode == REQUEST_IMAGE_CAPTURE) {
+            processCameraImage(savedCall, data);
+        } else if (requestCode == REQUEST_IMAGE_PICK) {
+            processPickedImage(savedCall, data);
+        }
+    }
+
+    private void getPhotoFromCamera(PluginCall call) {
+        if (checkPhotoPermissions()) {
+            if (!getContext().getPackageManager().hasSystemFeature(PackageManager.FEATURE_CAMERA)) {
+                call.error(NO_CAMERA_ERROR);
+                return;
+            }
+
+            Intent takePictureIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+            if (takePictureIntent.resolveActivity(getContext().getPackageManager()) != null) {
+                try {
+                    String appId = getAppId();
+                    File photoFile = createImageFile(getActivity(), false);
+                    imageFileSavePath = photoFile.getAbsolutePath();
+                    imageFileUri = FileProvider.getUriForFile(getActivity(), appId + ".fileprovider", photoFile);
+                    takePictureIntent.putExtra(MediaStore.EXTRA_OUTPUT, imageFileUri);
+                }
+                catch (Exception ex) {
+                    call.error(IMAGE_FILE_SAVE_ERROR, ex);
+                    return;
+                }
+
+                startActivityForResult(call, takePictureIntent, REQUEST_IMAGE_CAPTURE);
+            }
+        }
+    }
+
+    private void getPhotoFromGallery(PluginCall call) {
+        Intent intent = new Intent(Intent.ACTION_PICK);
+        intent.setType("image/*");
+        startActivityForResult(call, intent, REQUEST_IMAGE_PICK);
+    }
+
+    private void processCameraImage(PluginCall call, Intent data) {
+        if (imageFileSavePath == null) {
+            call.error(IMAGE_PROCESS_NO_FILE_ERROR);
+            return;
+        }
+
+        Bitmap bitmap = getRotatedBitmap();
+        if (bitmap == null) {
+            call.error(IMAGE_PROCESS_NO_FILE_ERROR);
+            return;
+        }
+
+        processImage(call, bitmap);
+    }
+
+    private void processPickedImage(PluginCall call, Intent data) {
+        if (data == null) {
+            call.error(NO_IMAGE_PICKED);
+            return;
+        }
+
+        Uri u = data.getData();
+        imageFileSavePath = getRealPathFromURI(getContext(), u);
+
+        try {
+            Bitmap bitmap = getRotatedBitmap();
+
+            if (bitmap == null) {
+                call.reject(UNABLE_TO_PROCESS_BITMAP);
+                return;
+            }
+
+            processImage(call, bitmap);
+        } catch (OutOfMemoryError err) {
+            call.error(OUT_OF_MEMORY);
+        }
+    }
+
+    private void processImage(PluginCall call, Bitmap bitmap) {
+        final FaceRec plugin = this;
+        final PluginCall pluginCall = call;
+        Task<List<FirebaseVisionFace>> result = detector.detectInImage(FirebaseVisionImage.fromBitmap(bitmap));
+        result.addOnSuccessListener(new OnSuccessListener<List<FirebaseVisionFace>>() {
+            @Override
+            public void onSuccess(@NonNull List<FirebaseVisionFace> faces) {
+                plugin.processDetectedFaces(pluginCall, faces);
+            }
+        });
+        result.addOnFailureListener(new OnFailureListener() {
+            @Override
+            public void onFailure(@NonNull Exception e) {
+                plugin.processDetectedFaces(pluginCall, null);
+            }
+        });
+    }
+
+    private void processDetectedFaces(PluginCall call, List<FirebaseVisionFace> faces) {
+        Bitmap bitmap = getRotatedBitmap();
+        if (bitmap != null){
+            File imageFile = new File(imageFileSavePath);
+            Uri contentUri = Uri.fromFile(imageFile);
+            JSArray resFaces = new JSArray();
+
+            Bitmap taggedBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true);
+            Canvas taggedCanvas = new Canvas(taggedBitmap);
+
+            float lineWidth = (float)Math.max(3, Math.min(bitmap.getWidth(), bitmap.getHeight()) * 0.01);
+            Paint linePaint = new Paint();
+            linePaint.setStyle(Paint.Style.STROKE);
+            linePaint.setStrokeWidth(lineWidth);
+
+            int bitmapWidth = bitmap.getWidth();
+            int bitmapHeight = bitmap.getHeight();
+
+            if (faces != null) {
+                for (FirebaseVisionFace face : faces) {
+                    Rect rect = face.getBoundingBox();
+                    int width = rect.width();
+                    int height = rect.height();
+                    int size = Math.max(width, height);
+                    int cropWidth = Math.min(bitmapWidth, size);
+                    int cropHeight = Math.min(bitmapHeight, size);
+                    int midCropWidth = Math.round(cropWidth / 2);
+                    int midCropHeight = Math.round(cropHeight / 2);
+                    int x = Math.min(bitmapWidth - cropWidth, Math.max(0, rect.centerX() - midCropWidth));
+                    int y = Math.min(bitmapHeight - cropHeight, Math.max(0, rect.centerY() - midCropHeight));
+                    float xScale = 64f / cropWidth;
+                    float yScale = 64f / cropHeight;
+                    Matrix matrix = new Matrix();
+                    matrix.postScale(xScale, yScale);
+                    Bitmap faceBitmap = Bitmap.createBitmap(bitmap, x, y, cropWidth, cropHeight, matrix, true);
+                    ByteBuffer faceByteBuffer = convertBitmapToByteBuffer(faceBitmap);
+                    faceBitmap.recycle();
+                    float[][] result = new float[1][2];
+                    genderModel.run(faceByteBuffer, result);
+                    JSObject resFace = new JSObject();
+                    resFace.put("x", x);
+                    resFace.put("y", y);
+                    resFace.put("width", width);
+                    resFace.put("height", height);
+                    JSObject resGender = new JSObject();
+                    resGender.put("male", result[0][0]);
+                    resGender.put("female", result[0][1]);
+                    resFace.put("gender", resGender);
+                    resFaces.put(resFace);
+
+                    linePaint.setColor(getColor(result[0][0], result[0][1]));
+                    taggedCanvas.drawRoundRect(rect.left, rect.top, rect.right, rect.bottom, lineWidth, lineWidth, linePaint);
+                }
+            }
+
+            JSObject result = new JSObject();
+
+            result.put("originalImage", bitmapToBase64(bitmap, contentUri));
+            bitmap.recycle();
+
+            result.put("taggedImage", bitmapToBase64(taggedBitmap, contentUri));
+            taggedBitmap.recycle();
+
+            result.put("faces", resFaces);
+
+            call.success(result);
+        }
+        else {
+            call.error(IMAGE_PROCESS_NO_FILE_ERROR);
+        }
+    }
+
+    private Bitmap getRotatedBitmap() {
+        try {
+            Bitmap bitmap = BitmapFactory.decodeFile(imageFileSavePath);
+            ExifInterface exif = new ExifInterface(imageFileSavePath);
+            int orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL);
+            int rotation = orientationToRotation(orientation);
+            if (rotation > 0) {
+                Matrix matrix = new Matrix();
+                matrix.preRotate(rotation);
+                Bitmap adjustedBitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+                bitmap.recycle();
+                bitmap = adjustedBitmap;
+            }
+            return bitmap;
+        } catch (IOException ex) {
+            return null;
+        }
+    }
+
+    private int orientationToRotation(int orientation) {
+        if (orientation == ExifInterface.ORIENTATION_ROTATE_90) { return 90; }
+        if (orientation == ExifInterface.ORIENTATION_ROTATE_180) { return 180; }
+        if (orientation == ExifInterface.ORIENTATION_ROTATE_270) { return 270; }
+        return 0;
+    }
+
+    private JSObject bitmapToBase64(Bitmap bitmap, Uri u) {
+        ByteArrayOutputStream bitmapOutputStream = new ByteArrayOutputStream();
+        ExifWrapper exif = ImageUtils.getExifData(getContext(), bitmap, u);
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 90, bitmapOutputStream);
+        byte[] byteArray = bitmapOutputStream.toByteArray();
+        String encoded = Base64.encodeToString(byteArray, Base64.DEFAULT);
+
+        JSObject exifJson = exif.toJson();
+        exifJson.put(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL);
+        JSObject data = new JSObject();
+        data.put("base64Data", "data:image/jpeg;base64," + encoded);
+        data.put("exif", exifJson);
+        return data;
+    }
+
+    private int getColor(float male, float female) {
+        if (male < 0.5) { return COLOR_MALE; }
+        if (female < 0.5) { return COLOR_FEMALE; }
+        return COLOR_INDETERMINATE;
+    }
+
+    private ByteBuffer convertBitmapToByteBuffer(Bitmap bitmap) {
+        ByteBuffer byteBuffer = ByteBuffer.allocateDirect(4 * BATCH_SIZE * INPUT_SIZE * INPUT_SIZE * PIXEL_SIZE);
+        byteBuffer.order(ByteOrder.nativeOrder());
+        int[] intValues = new int[INPUT_SIZE * INPUT_SIZE];
+        bitmap.getPixels(intValues, 0, bitmap.getWidth(), 0, 0, bitmap.getWidth(), bitmap.getHeight());
+        int pixel = 0;
+        for (int i = 0; i < INPUT_SIZE; ++i) {
+            for (int j = 0; j < INPUT_SIZE; ++j) {
+                final int val = intValues[pixel++];
+                byteBuffer.putFloat(val & 0xFF); // blue
+                byteBuffer.putFloat((val >> 8) & 0xFF); // green
+                byteBuffer.putFloat((val >> 16) & 0xFF); // red
+            }
+        }
+        return byteBuffer;
+    }
+
+    private File createImageFile(Activity activity, boolean saveToGallery) throws IOException {
+        // Create an image file name
+        String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
+        String imageFileName = "JPEG_" + timeStamp + "_";
+        File storageDir;
+        if(saveToGallery) {
+            Log.d(getLogTag(), "Trying to save image to public external directory");
+            storageDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES);
+        }  else {
+            storageDir = activity.getExternalFilesDir(Environment.DIRECTORY_PICTURES);
+        }
+
+        File image = File.createTempFile(
+                imageFileName,  /* prefix */
+                ".jpg",         /* suffix */
+                storageDir      /* directory */
+        );
+
+        return image;
+    }
+
+    private long getLastUpdate(URL url) {
+        Context context = getContext();
+        SharedPreferences sharedPref = context.getSharedPreferences(CACHE_PREFERENCES_NAME, Context.MODE_PRIVATE);
+        return sharedPref.getLong("last-update-" + url.toString(), 0);
+    }
+
+    private void setLastUpdate(URL url) {
+        Context context = getContext();
+        SharedPreferences sharedPref = context.getSharedPreferences(CACHE_PREFERENCES_NAME, Context.MODE_PRIVATE);
+        sharedPref.edit().putLong("last-update-" + url.toString(), System.currentTimeMillis()).apply();
+    }
+
+    private boolean downloadFile(URL url, String dest, String filename) {
+        try {
+            if (filename == null) {
+                String urlStr = url.toString();
+                filename = urlStr.substring(urlStr.lastIndexOf("/") + 1, urlStr.length());
+            }
+
+            String filePath = getFilePath(dest, filename);
+
+            HttpsURLConnection conn = (HttpsURLConnection) url.openConnection();
+            long currentTime = System.currentTimeMillis();
+            long expires = conn.getHeaderFieldDate("Expires", currentTime);
+            long lastModified = conn.getHeaderFieldDate("Last-Modified", currentTime);
+            long lastUpdateTime = getLastUpdate(url);
+            if (lastModified > lastUpdateTime || expires < lastUpdateTime) {
+                int responseCode = conn.getResponseCode();
+                if (responseCode == HttpsURLConnection.HTTP_OK) {
+                    InputStream inputStream = conn.getInputStream();
+                    File file = new File(filePath);
+                    File parent = file.getParentFile();
+                    if (!parent.exists()) {
+                        boolean parentCreated = parent.mkdirs();
+                        if (!parentCreated) {
+                            return false;
+                        }
+                    }
+                    if (!file.exists()) {
+                        boolean fileCreated = file.createNewFile();
+                        if (!fileCreated) {
+                            return false;
+                        }
+                    }
+
+                    JSObject dlProgress = new JSObject();
+                    int fileLen = conn.getContentLength();
+                    int readLen = 0;
+
+                    if (fileLen > -1) {
+                        dlProgress.put("progress", 0f);
+                    }
+
+                    notifyInitStatus(FaceRecInitStatus.DownloadingModel, dlProgress);
+
+                    FileOutputStream outputStream = new FileOutputStream(file);
+
+                    int bytesRead;
+                    byte[] buffer = new byte[BUFFER_SIZE];
+                    while ((bytesRead = inputStream.read(buffer)) != -1) {
+                        outputStream.write(buffer, 0, bytesRead);
+                        readLen += bytesRead;
+                        if (fileLen > 0) {
+                            dlProgress.put("progress", (float)readLen / fileLen);
+                            notifyInitStatus(FaceRecInitStatus.DownloadingModel, dlProgress);
+                        }
+                    }
+
+                    outputStream.close();
+                    inputStream.close();
+
+                    setLastUpdate(url);
+
+                    return true;
+                }
+                return false;
+            }
+            return true;
+        } catch(IOException e) {
+            return false;
+        }
+    }
+
+    private String getFilePath(String dest, String filename) {
+        return new File(
+                new File(getContext().getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS), dest),
+                filename
+        ).toString();
+    }
+
+    private void notifyInitStatus(FaceRecInitStatus status) {
+        notifyInitStatus(status, null);
+    }
+
+    private void notifyInitStatus(FaceRecInitStatus status, JSObject data) {
+        if (data == null) {
+            data = new JSObject();
+        }
+        data.put("status", status.ordinal());
+        notifyListeners("faceRecInitStatusChanged", data);
+    }
+
+    private void notifyInitError(String error) {
+        JSObject not = new JSObject();
+        not.put("status", FaceRecInitStatus.Error.ordinal());
+        if (error != null) {
+            not.put("error", error);
+        }
+        notifyListeners("faceRecInitStatusChanged", not);
+    }
+
+    private boolean checkInitPermission() {
+        if (!hasPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
+            pluginRequestPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE, REQUEST_DOWNLOAD_MODELS);
+            return false;
+        }
+        return true;
+    }
+
+    private boolean checkPhotoPermissions() {
+        if (!hasPermission(Manifest.permission.CAMERA)) {
+            pluginRequestPermission(Manifest.permission.CAMERA, REQUEST_IMAGE_CAPTURE);
+            return false;
+        }
+        return true;
+    }
+
+    private String getRealPathFromURI(Context context, Uri contentUri) {
+        Cursor cursor = null;
+        try {
+            if (contentUri != null) {
+                String[] tempArray = {MediaStore.Images.Media.DATA};
+                cursor = context.getContentResolver().query(contentUri, tempArray, null, null, null);
+                if (cursor != null) {
+                    int column_index = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATA);
+                    cursor.moveToFirst();
+                    return cursor.getString(column_index);
+                } else {
+                    return null;
+                }
+            } else {
+                return null;
+            }
+        } catch (Exception e) {
+            Log.e(getLogTag(), e.getMessage());
+            return null;
+        } finally {
+            if (cursor != null) {
+                cursor.close();
+            }
+        }
+    }
+}
