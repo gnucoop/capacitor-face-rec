@@ -6,9 +6,6 @@ buildscript {
     dependencies {
         classpath 'com.android.tools.build:gradle:3.3.2'
     }
-    ext {
-        rootGradleDir = "${rootProject.rootDir}/gradle"
-    }
 }
 
 plugins {
@@ -19,7 +16,7 @@ plugins {
 }
 
 apply plugin: 'com.android.library'
-apply from: "${rootGradleDir}/static-code-analysis.gradle"
+apply from: './gradle/static-code-analysis.gradle'
 
 android {
     compileSdkVersion 28
@@ -60,5 +57,5 @@ dependencies {
     implementation 'com.android.support:appcompat-v7:28.0.0'
     implementation 'com.android.support:exifinterface:28.0.0'
     implementation 'org.tensorflow:tensorflow-lite:1.14.0'
-    implementation 'com.google.firebase:firebase-ml-vision:23.0.0'
+    implementation 'com.google.firebase:firebase-ml-vision:20.0.0'
 }
