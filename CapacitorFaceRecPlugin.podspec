@@ -1,6 +1,6 @@
 
   Pod::Spec.new do |s|
-    s.name = 'FaceRec'
+    s.name = 'CapacitorFaceRecPlugin'
     s.version = '0.0.1'
     s.summary = 'Face recognition plugin'
     s.license = 'MIT'
