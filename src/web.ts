@@ -27,7 +27,7 @@ import { FaceRecInitStatusChangeHandler } from './init-status-change-handler';
 import { FaceRecognitionResult } from './result';
 
 export class FaceRecWeb extends WebPlugin implements FaceRecPlugin {
-  private _events: {[key: string]: FaceRecInitStatusChangeHandler[]};
+  private _events: {[key: string]: FaceRecInitStatusChangeHandler[]} = {};
 
   constructor() {
     super({
