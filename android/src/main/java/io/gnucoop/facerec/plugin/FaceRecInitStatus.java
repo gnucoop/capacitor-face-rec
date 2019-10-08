@@ -2,8 +2,8 @@ package io.gnucoop.facerec.plugin;
 
 public enum FaceRecInitStatus {
     Init,
-    LoadingModel,
-    DownloadingModel,
+    LoadingModels,
+    DownloadingModels,
     Success,
     Error
 }

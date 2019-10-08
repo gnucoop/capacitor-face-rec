@@ -120,7 +120,7 @@ public class FaceRec extends Plugin {
 
             boolean downloaded = downloadFile(url, "gender_age_model", "model.tflite");
 
-            notifyInitStatus(FaceRecInitStatus.LoadingModel);
+            notifyInitStatus(FaceRecInitStatus.LoadingModels);
 
             String modelFilePath = getFilePath("gender_age_model", "model.tflite");
             File modelFile = new File(modelFilePath);
@@ -489,7 +489,7 @@ public class FaceRec extends Plugin {
                         dlProgress.put("progress", 0f);
                     }
 
-                    notifyInitStatus(FaceRecInitStatus.DownloadingModel, dlProgress);
+                    notifyInitStatus(FaceRecInitStatus.DownloadingModels, dlProgress);
 
                     FileOutputStream outputStream = new FileOutputStream(file);
 
@@ -500,7 +500,7 @@ public class FaceRec extends Plugin {
                         readLen += bytesRead;
                         if (fileLen > 0) {
                             dlProgress.put("progress", (float)readLen / fileLen);
-                            notifyInitStatus(FaceRecInitStatus.DownloadingModel, dlProgress);
+                            notifyInitStatus(FaceRecInitStatus.DownloadingModels, dlProgress);
                         }
                     }
 
