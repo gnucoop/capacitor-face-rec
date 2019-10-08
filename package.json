@@ -13,14 +13,14 @@
   "author": "gnucoop",
   "license": "MIT",
   "dependencies": {
-    "@capacitor/core": "^1.2.0"
+    "@capacitor/core": "^1.2.1"
   },
   "devDependencies": {
-    "@capacitor/android": "^1.2.0",
-    "@capacitor/ios": "^1.2.0",
-    "tslint": "^5.19.0",
+    "@capacitor/android": "^1.2.1",
+    "@capacitor/ios": "^1.2.1",
+    "tslint": "^5.20.0",
     "tslint-ionic-rules": "^0.0.21",
-    "typescript": "^3.6.2"
+    "typescript": "^3.6.3"
   },
   "files": [
     "dist/",
