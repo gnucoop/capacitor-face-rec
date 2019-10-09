@@ -53,6 +53,10 @@ struct FaceRecPhotoSettings {
 
 struct FaceRecInitSettings {
     var modelUrl: String?
+    var batchSize: Int = 1;
+    var pixelSize: Int = 3;
+    var inputSize: Int = 64;
+    var inputAsRgb: Bool = true;
 }
 
 @objc(FaceRec)
@@ -82,9 +86,6 @@ public class FaceRec: CAPPlugin, UIImagePickerControllerDelegate, UINavigationCo
     private static let COLOR_MALE = hexStringToUIColor("#6bcef5");
     private static let COLOR_FEMALE = hexStringToUIColor("#f4989d");
     private static let COLOR_INDETERMINATE = hexStringToUIColor("#c4db66");
-    private static let BATCH_SIZE = 1;
-    private static let PIXEL_SIZE = 3;
-    private static let INPUT_SIZE = 64;
     
     private var imagePicker: UIImagePickerController?
     private var call: CAPPluginCall?
@@ -215,7 +216,7 @@ public class FaceRec: CAPPlugin, UIImagePickerControllerDelegate, UINavigationCo
         let imageWidth = Int(image!.size.width)
         let imageHeight = Int(image!.size.height)
         
-        let faceByteCount = FaceRec.INPUT_SIZE * FaceRec.INPUT_SIZE * FaceRec.PIXEL_SIZE
+        let faceByteCount = initSettings.batchSize * initSettings.inputSize * initSettings.inputSize * initSettings.pixelSize
         
         faceDetector!.process(visionImage) { faces, error in
             guard error == nil else {
@@ -228,13 +229,13 @@ public class FaceRec: CAPPlugin, UIImagePickerControllerDelegate, UINavigationCo
             if faces != nil && !faces!.isEmpty {
                 let options = ModelInputOutputOptions()
                 try? options.setInputFormat(index: 0, type: .float32, dimensions: [
-                    NSNumber(value: 1),
-                    NSNumber(value: 64),
-                    NSNumber(value: 64),
-                    NSNumber(value: 3)
+                    NSNumber(value: self.initSettings.batchSize),
+                    NSNumber(value: self.initSettings.inputSize),
+                    NSNumber(value: self.initSettings.inputSize),
+                    NSNumber(value: self.initSettings.pixelSize)
                     ])
                 try? options.setOutputFormat(index: 0, type: .float32, dimensions: [
-                    NSNumber(value: 1),
+                    NSNumber(value: self.initSettings.batchSize),
                     NSNumber(value: 2)
                     ])
                 
@@ -253,7 +254,7 @@ public class FaceRec: CAPPlugin, UIImagePickerControllerDelegate, UINavigationCo
                     let y = min(imageHeight - cropHeight, max(0, Int(rect.midY) - midCropHeight))
                     
                     let faceCrop = UIImage(cgImage: image!.cgImage!.cropping(to: CGRect.init(x: x, y: y, width: cropWidth, height: cropHeight))!)
-                    let faceData = faceCrop.scaledData(with: CGSize.init(width: FaceRec.INPUT_SIZE, height: FaceRec.INPUT_SIZE), byteCount: faceByteCount)
+                    let faceData = faceCrop.scaledData(with: CGSize.init(width: self.initSettings.inputSize, height: self.initSettings.inputSize), byteCount: faceByteCount, inputAsRgb: self.initSettings.inputAsRgb)
                     let facePng = UIImagePNGRepresentation(faceCrop)!
                     let docDir = try! FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
                     let faceUrl = docDir.appendingPathComponent("face" + String(faceNum) + ".png")
@@ -549,6 +550,18 @@ public class FaceRec: CAPPlugin, UIImagePickerControllerDelegate, UINavigationCo
     private func getInitSettings(_ call: CAPPluginCall) -> FaceRecInitSettings {
         var settings = FaceRecInitSettings()
         settings.modelUrl = call.get("modelUrl", String.self)
+        if call.hasOption("batchSize"), let optBatchSize = call.getInt("batchSize") {
+            settings.batchSize = optBatchSize
+        }
+        if call.hasOption("inputSize"), let optInputSize = call.getInt("inputSize") {
+            settings.inputSize = optInputSize
+        }
+        if call.hasOption("pixelSize"), let optPixelSize = call.getInt("pixelSize") {
+            settings.pixelSize = optPixelSize
+        }
+        if call.hasOption("inputAsRgb"), let optInputAsRgb = call.getBool("inputAsRgb") {
+            settings.inputAsRgb = optInputAsRgb
+        }
         return settings
     }
     

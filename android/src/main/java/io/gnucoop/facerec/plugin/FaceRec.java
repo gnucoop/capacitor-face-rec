@@ -61,7 +61,7 @@ import javax.net.ssl.HttpsURLConnection;
 import org.tensorflow.lite.Interpreter;
 
 @NativePlugin(
-    requestCodes={FaceRec.REQUEST_IMAGE_CAPTURE, FaceRec.REQUEST_IMAGE_PICK}
+        requestCodes={FaceRec.REQUEST_IMAGE_CAPTURE, FaceRec.REQUEST_IMAGE_PICK}
 )
 public class FaceRec extends Plugin {
     static final int REQUEST_IMAGE_CAPTURE = PluginRequestCodes.CAMERA_IMAGE_CAPTURE;
@@ -86,10 +86,15 @@ public class FaceRec extends Plugin {
     private static final int COLOR_MALE = Color.parseColor("#6bcef5");
     private static final int COLOR_FEMALE = Color.parseColor("#f4989d");
     private static final int COLOR_INDETERMINATE = Color.parseColor("#c4db66");
-    private static final int BATCH_SIZE = 1;
-    private static final int PIXEL_SIZE = 3;
-    private static final int INPUT_SIZE = 64;
 
+    private int batchSize = 1;
+    private int pixelSize = 3;
+    private int inputSize = 64;
+    private boolean inputAsRgb = true;
+    private boolean floatNet = true;
+    private int bytesPerChannel = 4;
+    private Float[] imageMean = new Float[]{ 127.5f, 127.5f, 127.5f };
+    private Float[] imageStd = new Float[]{ 127.5f, 127.5f, 127.5f };
     private FirebaseVisionFaceDetector detector;
     private String imageFileSavePath;
     private Uri imageFileUri;
@@ -105,6 +110,42 @@ public class FaceRec extends Plugin {
             notifyInitError(MISSING_INIT_PERMISSIONS);
             call.error(MISSING_INIT_PERMISSIONS);
             return;
+        }
+
+        if (call.hasOption("batchSize")) {
+            Integer optBatchSize = call.getInt("batchSize");
+            if (optBatchSize != null) {
+                batchSize = optBatchSize;
+            }
+        }
+
+        if (call.hasOption("pixelSize")) {
+            Integer optPixelSize = call.getInt("pixelSize");
+            if (optPixelSize != null) {
+                pixelSize = optPixelSize;
+            }
+        }
+
+        if (call.hasOption("inputSize")) {
+            Integer optInputSize = call.getInt("inputSize");
+            if (optInputSize != null) {
+                inputSize = optInputSize;
+            }
+        }
+
+        if (call.hasOption("inputAsRgb")) {
+            Boolean optInputAsRgb = call.getBoolean("inputAsRgb");
+            if (optInputAsRgb != null) {
+                inputAsRgb = optInputAsRgb;
+            }
+        }
+
+        if (call.hasOption("floatNet")) {
+            Boolean optFloatNet = call.getBoolean("floatNet");
+            if (optFloatNet != null) {
+                floatNet = optFloatNet;
+                bytesPerChannel = floatNet ? 4 : 1;
+            }
         }
 
         String modelUrl = call.getString("modelUrl");
@@ -297,7 +338,7 @@ public class FaceRec extends Plugin {
             int bitmapWidth = bitmap.getWidth();
             int bitmapHeight = bitmap.getHeight();
 
-            if (faces != null) {
+            if (faces != null && !faces.isEmpty()) {
                 for (FirebaseVisionFace face : faces) {
                     Rect rect = face.getBoundingBox();
                     int width = rect.width();
@@ -309,8 +350,8 @@ public class FaceRec extends Plugin {
                     int midCropHeight = Math.round(cropHeight / 2);
                     int x = Math.min(bitmapWidth - cropWidth, Math.max(0, rect.centerX() - midCropWidth));
                     int y = Math.min(bitmapHeight - cropHeight, Math.max(0, rect.centerY() - midCropHeight));
-                    float xScale = 64f / cropWidth;
-                    float yScale = 64f / cropHeight;
+                    float xScale = (float)inputSize / (float)cropWidth;
+                    float yScale = (float)inputSize / (float)cropHeight;
                     Matrix matrix = new Matrix();
                     matrix.postScale(xScale, yScale);
                     Bitmap faceBitmap = Bitmap.createBitmap(bitmap, x, y, cropWidth, cropHeight, matrix, true);
@@ -332,6 +373,21 @@ public class FaceRec extends Plugin {
                     linePaint.setColor(getColor(result[0][0], result[0][1]));
                     taggedCanvas.drawRoundRect(rect.left, rect.top, rect.right, rect.bottom, lineWidth, lineWidth, linePaint);
                 }
+            } else {
+                Bitmap faceBitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight());
+                ByteBuffer faceByteBuffer = convertBitmapToByteBuffer(faceBitmap);
+                float[][] result = new float[1][2];
+                genderModel.run(faceByteBuffer, result);
+                JSObject resFace = new JSObject();
+                resFace.put("x", 0);
+                resFace.put("y", 0);
+                resFace.put("width", bitmap.getWidth());
+                resFace.put("height", bitmap.getHeight());
+                JSObject resGender = new JSObject();
+                resGender.put("male", result[0][0]);
+                resGender.put("female", result[0][1]);
+                resFace.put("gender", resGender);
+                resFaces.put(resFace);
             }
 
             JSObject result = new JSObject();
@@ -399,17 +455,38 @@ public class FaceRec extends Plugin {
     }
 
     private ByteBuffer convertBitmapToByteBuffer(Bitmap bitmap) {
-        ByteBuffer byteBuffer = ByteBuffer.allocateDirect(4 * BATCH_SIZE * INPUT_SIZE * INPUT_SIZE * PIXEL_SIZE);
+        ByteBuffer byteBuffer = ByteBuffer.allocateDirect(bytesPerChannel * batchSize * inputSize * inputSize * pixelSize);
         byteBuffer.order(ByteOrder.nativeOrder());
-        int[] intValues = new int[INPUT_SIZE * INPUT_SIZE];
+        int[] intValues = new int[inputSize * inputSize];
         bitmap.getPixels(intValues, 0, bitmap.getWidth(), 0, 0, bitmap.getWidth(), bitmap.getHeight());
         int pixel = 0;
-        for (int i = 0; i < INPUT_SIZE; ++i) {
-            for (int j = 0; j < INPUT_SIZE; ++j) {
+        for (int i = 0; i < inputSize; ++i) {
+            for (int j = 0; j < inputSize; ++j) {
                 final int val = intValues[pixel++];
-                byteBuffer.putFloat(val & 0xFF); // blue
-                byteBuffer.putFloat((val >> 8) & 0xFF); // green
-                byteBuffer.putFloat((val >> 16) & 0xFF); // red
+                int first = inputAsRgb ? (val >> 16) & 0xFF : val & 0xFF; // red / blue
+                int second = (val >> 8) & 0xFF; // green
+                int third = inputAsRgb ? val & 0xFF : (val >> 16) & 0xFF; // blue / red
+                if (floatNet) {
+                    float normFirst = first - imageMean[0];
+                    if (imageStd[0] != null) {
+                        normFirst = normFirst / imageStd[0];
+                    }
+                    float normSecond = second - imageMean[1];
+                    if (imageStd[1] != null) {
+                        normSecond = normSecond / imageStd[1];
+                    }
+                    float normThird = third - imageMean[2];
+                    if (imageStd[2] != null) {
+                        normThird = normThird / imageStd[2];
+                    }
+                    byteBuffer.putFloat(normFirst);
+                    byteBuffer.putFloat(normSecond);
+                    byteBuffer.putFloat(normThird);
+                } else {
+                    byteBuffer.put((byte)(inputAsRgb ? (val >> 16) & 0xFF : val & 0xFF));
+                    byteBuffer.put((byte)((val >> 8) & 0xFF)); // green
+                    byteBuffer.put((byte)(inputAsRgb ? val & 0xFF : (val >> 16) & 0xFF)); // blue / red
+                }
             }
         }
         return byteBuffer;

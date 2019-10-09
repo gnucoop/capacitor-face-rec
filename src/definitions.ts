@@ -20,6 +20,7 @@
 
 import { FaceRecGetPhotoOpts } from './get-photo-opts';
 import { FaceRecInitEvent } from './init-event';
+import { FaceRecInitOpts } from './init-opts';
 import { FaceRecognitionResult } from './result';
 
 declare module '@capacitor/core' {
@@ -29,7 +30,7 @@ declare module '@capacitor/core' {
 }
 
 export interface FaceRecPlugin {
-  initFaceRecognition(opts: {modelUrl: string}): Promise<FaceRecInitEvent>;
+  initFaceRecognition(opts: FaceRecInitOpts): Promise<FaceRecInitEvent>;
   getPhoto(opts: FaceRecGetPhotoOpts): Promise<FaceRecognitionResult>;
   addEventListener(event: 'faceRecInitStatusChanged', handler: (statusEvt: FaceRecInitEvent) => void): void;
   removeEventListener(event: 'faceRecInitStatusChanged', handler: (statusEvt: FaceRecInitEvent) => void): void;

@@ -18,12 +18,10 @@
  *
  */
 
-export * from './definitions';
-export * from './get-photo-opts';
-export * from './init-event';
-export * from './init-opts';
-export * from './init-status-change-handler';
-export * from './init-status';
-export * from './photo-source';
-export * from './result';
-export * from './web';
+export interface FaceRecInitOpts {
+  modelUrl: string;
+  inputSize?: number;
+  pixelSize?: number;
+  inputAsRgb?: boolean;
+  floatNet?: boolean;
+}

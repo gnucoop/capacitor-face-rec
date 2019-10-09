@@ -50,7 +50,7 @@ extension UIImage {
     ///   - isQuantized: Whether the model is quantized (i.e. fixed point values rather than floating
     ///       point values).
     /// - Returns: The scaled image as data or `nil` if the image could not be scaled.
-    public func scaledData(with size: CGSize, byteCount: Int) -> Data? {
+    public func scaledData(with size: CGSize, byteCount: Int, floatNet: Bool = true, inputAsRgb: Bool = true, inputMean: [Float32] = [127.5, 127.5, 127.5], inputStd: [Float32?] = [127.5, 127.5, 127.5]) -> Data? {
         guard let cgImage = self.cgImage, cgImage.width > 0, cgImage.height > 0 else { return nil }
         guard let imageData = imageData(from: cgImage, with: size) else { return nil }
         var inputData = Data()
@@ -59,16 +59,28 @@ extension UIImage {
         for row in 0 ..< intWidth {
             for col in 0 ..< intHeight {
                 let offset = 4 * (row * intWidth + col)
-                var blue = Float32(imageData[offset+2] as UInt8)
-                var red = Float32(imageData[offset] as UInt8)
-                var green = Float32(imageData[offset+1] as UInt8)
-                let elementSize = MemoryLayout.size(ofValue: red)
+                let firstInt = imageData[inputAsRgb ? offset : offset+2] as UInt8
+                let secondInt = imageData[offset+1] as UInt8
+                let thirdInt = imageData[inputAsRgb ? offset+2 : offset] as UInt8
+                var first: Any
+                var second: Any
+                var third: Any
+                if (floatNet) {
+                    first = (Float32(firstInt) - inputMean[0]) / Float32(inputStd[0] != nil ? inputStd[0]! : 1)
+                    second = (Float32(secondInt) - inputMean[1]) / Float32(inputStd[1] != nil ? inputStd[1]! : 1)
+                    third = (Float32(thirdInt) - inputMean[2]) / Float32(inputStd[2] != nil ? inputStd[2]! : 1)
+                } else {
+                    first = firstInt
+                    second = secondInt
+                    third = thirdInt
+                }
+                let elementSize = MemoryLayout.size(ofValue: first)
                 var bytes = [UInt8](repeating: 0, count: elementSize)
-                memcpy(&bytes, &blue, elementSize)
+                memcpy(&bytes, &first, elementSize)
                 inputData.append(&bytes, count: elementSize)
-                memcpy(&bytes, &green, elementSize)
+                memcpy(&bytes, &second, elementSize)
                 inputData.append(&bytes, count: elementSize)
-                memcpy(&bytes, &red, elementSize)
+                memcpy(&bytes, &third, elementSize)
                 inputData.append(&bytes, count: elementSize)
             }
         }
