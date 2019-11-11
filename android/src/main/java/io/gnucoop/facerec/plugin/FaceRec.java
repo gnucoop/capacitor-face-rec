@@ -61,11 +61,17 @@ import javax.net.ssl.HttpsURLConnection;
 import org.tensorflow.lite.Interpreter;
 
 @NativePlugin(
-        requestCodes={FaceRec.REQUEST_IMAGE_CAPTURE, FaceRec.REQUEST_IMAGE_PICK}
+        permissions={
+                Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                Manifest.permission.CAMERA
+        },
+        requestCodes={FaceRec.REQUEST_INIT, FaceRec.REQUEST_IMAGE_CAPTURE, FaceRec.REQUEST_IMAGE_PICK}
 )
 public class FaceRec extends Plugin {
-    static final int REQUEST_IMAGE_CAPTURE = PluginRequestCodes.CAMERA_IMAGE_CAPTURE;
-    static final int REQUEST_IMAGE_PICK = PluginRequestCodes.CAMERA_IMAGE_PICK;
+    static final int REQUEST_INIT = 9901;
+    static final int REQUEST_IMAGE_CAPTURE = 9902;
+    static final int REQUEST_IMAGE_PICK = 9903;
+    static final String CACHE_PREFERENCES_NAME = "facerPluginCachePrefs";
 
     private static final int REQUEST_DOWNLOAD_MODELS = 10030;
     private static final String MISSING_INIT_PERMISSIONS = "Missing init permissions";
@@ -81,8 +87,6 @@ public class FaceRec extends Plugin {
     private static final String OUT_OF_MEMORY = "Out of memory";
     private static final String NO_IMAGE_FOUND = "No image found";
 
-    private static final int BUFFER_SIZE = 4096;
-    private static final String CACHE_PREFERENCES_NAME = "facerPluginCachePrefs";
     private static final int COLOR_MALE = Color.parseColor("#6bcef5");
     private static final int COLOR_FEMALE = Color.parseColor("#f4989d");
     private static final int COLOR_INDETERMINATE = Color.parseColor("#c4db66");
@@ -106,9 +110,11 @@ public class FaceRec extends Plugin {
 
         notifyInitStatus(FaceRecInitStatus.Init);
 
-        if (!checkInitPermission()) {
-            notifyInitError(MISSING_INIT_PERMISSIONS);
-            call.error(MISSING_INIT_PERMISSIONS);
+        if (!hasPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) || !hasPermission(Manifest.permission.CAMERA)) {
+            pluginRequestPermissions(new String[] {
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                    Manifest.permission.CAMERA
+            }, FaceRec.REQUEST_INIT);
             return;
         }
 
@@ -159,39 +165,7 @@ public class FaceRec extends Plugin {
                 return;
             }
 
-            boolean downloaded = downloadFile(url, "gender_age_model", "model.tflite");
-
-            notifyInitStatus(FaceRecInitStatus.LoadingModels);
-
-            String modelFilePath = getFilePath("gender_age_model", "model.tflite");
-            File modelFile = new File(modelFilePath);
-
-            if (!downloaded && !modelFile.exists()) {
-                notifyInitError(MODEL_DOWNLOAD_ERROR);
-                call.error(MODEL_DOWNLOAD_ERROR);
-                return;
-            }
-            genderModel = new Interpreter(modelFile);
-
-            try{
-                FirebaseApp.getInstance();
-            }
-            catch (IllegalStateException e) {
-                FirebaseApp.initializeApp(getContext());
-            }
-
-            FirebaseVisionFaceDetectorOptions options = new FirebaseVisionFaceDetectorOptions.Builder()
-                    .setPerformanceMode(FirebaseVisionFaceDetectorOptions.FAST)
-                    .setLandmarkMode(FirebaseVisionFaceDetectorOptions.NO_LANDMARKS)
-                    .setClassificationMode(FirebaseVisionFaceDetectorOptions.NO_CLASSIFICATIONS)
-                    .build();
-
-            detector = FirebaseVision.getInstance().getVisionFaceDetector(options);
-
-            notifyInitStatus(FaceRecInitStatus.Success);
-            JSObject res = new JSObject();
-            res.put("status", FaceRecInitStatus.Success.ordinal());
-            call.success(res);
+            new FaceRecModelDownloadTask(this).execute(modelUrl, "gender_age_model", "model.tflite");
         } catch (MalformedURLException e) {
             notifyInitError(INVALID_MODEL_URL_ERROR);
             call.error(INVALID_MODEL_URL_ERROR);
@@ -232,8 +206,74 @@ public class FaceRec extends Plugin {
         }
     }
 
+    @Override
+    protected void handleRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.handleRequestPermissionsResult(requestCode, permissions, grantResults);
+
+        Log.d(getLogTag(),"handling request perms result");
+
+        if (getSavedCall() == null) {
+            Log.d(getLogTag(),"No stored plugin call for permissions request result");
+            return;
+        }
+
+        PluginCall savedCall = getSavedCall();
+
+        for (int i = 0; i < grantResults.length; i++) {
+            int result = grantResults[i];
+            String perm = permissions[i];
+            if(result == PackageManager.PERMISSION_DENIED) {
+                Log.d(getLogTag(), "User denied camera permission: " + perm);
+                savedCall.error(MISSING_INIT_PERMISSIONS);
+                return;
+            }
+        }
+
+        if (requestCode == REQUEST_INIT) {
+            initFaceRecognition(savedCall);
+        } else if (requestCode == REQUEST_IMAGE_CAPTURE) {
+            getPhotoFromCamera(savedCall);
+        }
+    }
+
+    protected void loadDownloadedModel(Boolean downloaded) {
+        PluginCall call = getSavedCall();
+
+        notifyInitStatus(FaceRecInitStatus.LoadingModels);
+
+        String modelFilePath = getFilePath("gender_age_model", "model.tflite");
+        File modelFile = new File(modelFilePath);
+
+        if (!downloaded && !modelFile.exists()) {
+            notifyInitError(MODEL_DOWNLOAD_ERROR);
+            call.error(MODEL_DOWNLOAD_ERROR);
+            return;
+        }
+        genderModel = new Interpreter(modelFile);
+
+        try{
+            FirebaseApp.getInstance();
+        }
+        catch (IllegalStateException e) {
+            FirebaseApp.initializeApp(getContext());
+        }
+
+        FirebaseVisionFaceDetectorOptions options = new FirebaseVisionFaceDetectorOptions.Builder()
+                .setPerformanceMode(FirebaseVisionFaceDetectorOptions.FAST)
+                .setLandmarkMode(FirebaseVisionFaceDetectorOptions.NO_LANDMARKS)
+                .setClassificationMode(FirebaseVisionFaceDetectorOptions.NO_CLASSIFICATIONS)
+                .build();
+
+        detector = FirebaseVision.getInstance().getVisionFaceDetector(options);
+
+        notifyInitStatus(FaceRecInitStatus.Success);
+        JSObject res = new JSObject();
+        res.put("status", FaceRecInitStatus.Success.ordinal());
+        call.success(res);
+    }
+
     private void getPhotoFromCamera(PluginCall call) {
-        if (checkPhotoPermissions()) {
+        if (hasPermission(Manifest.permission.CAMERA)) {
             if (!getContext().getPackageManager().hasSystemFeature(PackageManager.FEATURE_CAMERA)) {
                 call.error(NO_CAMERA_ERROR);
                 return;
@@ -255,6 +295,10 @@ public class FaceRec extends Plugin {
 
                 startActivityForResult(call, takePictureIntent, REQUEST_IMAGE_CAPTURE);
             }
+        } else {
+            pluginRequestPermissions(new String[] {
+                    Manifest.permission.CAMERA
+            }, FaceRec.REQUEST_IMAGE_CAPTURE);
         }
     }
 
@@ -525,77 +569,6 @@ public class FaceRec extends Plugin {
         sharedPref.edit().putLong("last-update-" + url.toString(), System.currentTimeMillis()).apply();
     }
 
-    private boolean downloadFile(URL url, String dest, String filename) {
-        try {
-            if (filename == null) {
-                String urlStr = url.toString();
-                filename = urlStr.substring(urlStr.lastIndexOf("/") + 1, urlStr.length());
-            }
-
-            String filePath = getFilePath(dest, filename);
-
-            HttpsURLConnection conn = (HttpsURLConnection) url.openConnection();
-            long currentTime = System.currentTimeMillis();
-            long expires = conn.getHeaderFieldDate("Expires", currentTime);
-            long lastModified = conn.getHeaderFieldDate("Last-Modified", currentTime);
-            long lastUpdateTime = getLastUpdate(url);
-            if (lastModified > lastUpdateTime || expires < lastUpdateTime) {
-                int responseCode = conn.getResponseCode();
-                if (responseCode == HttpsURLConnection.HTTP_OK) {
-                    InputStream inputStream = conn.getInputStream();
-                    File file = new File(filePath);
-                    File parent = file.getParentFile();
-                    if (!parent.exists()) {
-                        boolean parentCreated = parent.mkdirs();
-                        if (!parentCreated) {
-                            return false;
-                        }
-                    }
-                    if (!file.exists()) {
-                        boolean fileCreated = file.createNewFile();
-                        if (!fileCreated) {
-                            return false;
-                        }
-                    }
-
-                    JSObject dlProgress = new JSObject();
-                    int fileLen = conn.getContentLength();
-                    int readLen = 0;
-
-                    if (fileLen > -1) {
-                        dlProgress.put("progress", 0f);
-                    }
-
-                    notifyInitStatus(FaceRecInitStatus.DownloadingModels, dlProgress);
-
-                    FileOutputStream outputStream = new FileOutputStream(file);
-
-                    int bytesRead;
-                    byte[] buffer = new byte[BUFFER_SIZE];
-                    while ((bytesRead = inputStream.read(buffer)) != -1) {
-                        outputStream.write(buffer, 0, bytesRead);
-                        readLen += bytesRead;
-                        if (fileLen > 0) {
-                            dlProgress.put("progress", (float)readLen / fileLen);
-                            notifyInitStatus(FaceRecInitStatus.DownloadingModels, dlProgress);
-                        }
-                    }
-
-                    outputStream.close();
-                    inputStream.close();
-
-                    setLastUpdate(url);
-
-                    return true;
-                }
-                return false;
-            }
-            return true;
-        } catch(IOException e) {
-            return false;
-        }
-    }
-
     private String getFilePath(String dest, String filename) {
         return new File(
                 new File(getContext().getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS), dest),
@@ -607,7 +580,7 @@ public class FaceRec extends Plugin {
         notifyInitStatus(status, null);
     }
 
-    private void notifyInitStatus(FaceRecInitStatus status, JSObject data) {
+    protected void notifyInitStatus(FaceRecInitStatus status, JSObject data) {
         if (data == null) {
             data = new JSObject();
         }
@@ -622,22 +595,6 @@ public class FaceRec extends Plugin {
             not.put("error", error);
         }
         notifyListeners("faceRecInitStatusChanged", not);
-    }
-
-    private boolean checkInitPermission() {
-        if (!hasPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
-            pluginRequestPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE, REQUEST_DOWNLOAD_MODELS);
-            return false;
-        }
-        return true;
-    }
-
-    private boolean checkPhotoPermissions() {
-        if (!hasPermission(Manifest.permission.CAMERA)) {
-            pluginRequestPermission(Manifest.permission.CAMERA, REQUEST_IMAGE_CAPTURE);
-            return false;
-        }
-        return true;
     }
 
     private String getRealPathFromURI(Context context, Uri contentUri) {
