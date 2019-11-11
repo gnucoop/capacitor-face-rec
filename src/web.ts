@@ -44,20 +44,20 @@ export class FaceRecWeb extends WebPlugin implements FaceRecPlugin {
 
   getPhoto(_opts: FaceRecGetPhotoOpts): Promise<FaceRecognitionResult> {
     return Promise.resolve({
-      x: 0, y: 0, width: 0, height: 0,
-      gender: { male: 0, female: 0 },
+      faces: [],
       originalImage: '', taggedImage: { base64Data: '' }
     });
   }
 
-  addEventListener(event: 'faceRecInitStatusChanged', handler: FaceRecInitStatusChangeHandler): void {
+  addListener(event: 'faceRecInitStatusChanged', handler: FaceRecInitStatusChangeHandler): {remove: () => void} {
     if (this._events[event] == null) {
       this._events[event] = [];
     }
     this._events[event].push(handler);
+    return {remove: () => this.removeListener(event, handler)};
   }
 
-  removeEventListener(event: 'faceRecInitStatusChanged', handler: FaceRecInitStatusChangeHandler): void {
+  removeListener(event: 'faceRecInitStatusChanged', handler: FaceRecInitStatusChangeHandler): void {
     if (this._events[event] == null) { return; }
     const hIdx = this._events[event].indexOf(handler);
     if (hIdx > -1) {
