@@ -32,6 +32,5 @@ declare module '@capacitor/core' {
 export interface FaceRecPlugin {
   initFaceRecognition(opts: FaceRecInitOpts): Promise<FaceRecInitEvent>;
   getPhoto(opts: FaceRecGetPhotoOpts): Promise<FaceRecognitionResult>;
-  addEventListener(event: 'faceRecInitStatusChanged', handler: (statusEvt: FaceRecInitEvent) => void): void;
-  removeEventListener(event: 'faceRecInitStatusChanged', handler: (statusEvt: FaceRecInitEvent) => void): void;
+  addListener(event: 'faceRecInitStatusChanged', handler: (statusEvt: FaceRecInitEvent) => void): {remove: () => void};
 }

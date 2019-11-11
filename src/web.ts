@@ -54,10 +54,10 @@ export class FaceRecWeb extends WebPlugin implements FaceRecPlugin {
       this._events[event] = [];
     }
     this._events[event].push(handler);
-    return {remove: () => this.removeListener(event, handler)};
+    return {remove: () => this._removeListener(event, handler)};
   }
 
-  removeListener(event: 'faceRecInitStatusChanged', handler: FaceRecInitStatusChangeHandler): void {
+  private _removeListener(event: 'faceRecInitStatusChanged', handler: FaceRecInitStatusChangeHandler): void {
     if (this._events[event] == null) { return; }
     const hIdx = this._events[event].indexOf(handler);
     if (hIdx > -1) {
