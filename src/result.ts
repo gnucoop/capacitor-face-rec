@@ -18,7 +18,7 @@
  *
  */
 
-export interface FaceRecognitionResult {
+export interface FaceRecognitionFace {
   x: number;
   y: number;
   width: number;
@@ -27,6 +27,10 @@ export interface FaceRecognitionResult {
     male: number;
     female: number;
   };
+}
+
+export interface FaceRecognitionResult {
+  faces: FaceRecognitionFace[],
   originalImage: string;
   taggedImage: {
     base64Data: string;
