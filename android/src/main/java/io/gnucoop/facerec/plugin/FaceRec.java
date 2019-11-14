@@ -281,9 +281,10 @@ public class FaceRec extends Plugin {
 
             Intent takePictureIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
             if (takePictureIntent.resolveActivity(getContext().getPackageManager()) != null) {
+                Boolean saveToGallery = call.getBoolean("saveToGallery", false);
                 try {
                     String appId = getAppId();
-                    File photoFile = createImageFile(getActivity(), false);
+                    File photoFile = createImageFile(getActivity(), saveToGallery);
                     imageFileSavePath = photoFile.getAbsolutePath();
                     imageFileUri = FileProvider.getUriForFile(getActivity(), appId + ".fileprovider", photoFile);
                     takePictureIntent.putExtra(MediaStore.EXTRA_OUTPUT, imageFileUri);

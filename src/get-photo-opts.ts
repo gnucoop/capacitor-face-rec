@@ -22,4 +22,5 @@ import { FaceRecPhotoSource } from './photo-source';
 
 export interface FaceRecGetPhotoOpts {
   source: FaceRecPhotoSource;
+  saveToGallery?: boolean;
 }
