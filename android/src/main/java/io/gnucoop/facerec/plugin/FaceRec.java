@@ -515,8 +515,8 @@ public class FaceRec extends Plugin {
     }
 
     private int getColor(float male, float female) {
-        if (male < 0.5) { return COLOR_MALE; }
-        if (female < 0.5) { return COLOR_FEMALE; }
+        if (male > female && male > 0.5) { return COLOR_MALE; }
+        if (female > male && female > 0.5) { return COLOR_FEMALE; }
         return COLOR_INDETERMINATE;
     }
 
