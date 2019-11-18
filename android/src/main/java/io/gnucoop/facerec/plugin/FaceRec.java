@@ -386,40 +386,57 @@ public class FaceRec extends Plugin {
             if (faces != null && !faces.isEmpty()) {
                 for (FirebaseVisionFace face : faces) {
                     Rect rect = face.getBoundingBox();
-                    int width = rect.width();
-                    int height = rect.height();
-                    int size = Math.max(width, height);
-                    int cropWidth = Math.min(bitmapWidth, size);
-                    int cropHeight = Math.min(bitmapHeight, size);
-                    int midCropWidth = Math.round(cropWidth / 2);
-                    int midCropHeight = Math.round(cropHeight / 2);
-                    int x = Math.min(bitmapWidth - cropWidth, Math.max(0, rect.centerX() - midCropWidth));
-                    int y = Math.min(bitmapHeight - cropHeight, Math.max(0, rect.centerY() - midCropHeight));
-                    float xScale = (float)inputSize / (float)cropWidth;
-                    float yScale = (float)inputSize / (float)cropHeight;
-                    Matrix matrix = new Matrix();
-                    matrix.postScale(xScale, yScale);
-                    Bitmap faceBitmap = Bitmap.createBitmap(bitmap, x, y, cropWidth, cropHeight, matrix, true);
-                    ByteBuffer faceByteBuffer = convertBitmapToByteBuffer(faceBitmap);
-                    faceBitmap.recycle();
-                    float[][] result = new float[1][2];
-                    genderModel.run(faceByteBuffer, result);
-                    JSObject resFace = new JSObject();
-                    resFace.put("x", x);
-                    resFace.put("y", y);
-                    resFace.put("width", width);
-                    resFace.put("height", height);
-                    JSObject resGender = new JSObject();
-                    resGender.put("male", result[0][0]);
-                    resGender.put("female", result[0][1]);
-                    resFace.put("gender", resGender);
-                    resFaces.put(resFace);
+                    if (rect.top > 0 && rect.left > 0) {
+                      int width = rect.width();
+                      int height = rect.height();
+                      int size = Math.max(width, height);
+                      int cropWidth = Math.min(bitmapWidth, size);
+                      int cropHeight = Math.min(bitmapHeight, size);
+                      int midCropWidth = Math.round(cropWidth / 2);
+                      int midCropHeight = Math.round(cropHeight / 2);
+                      int x = Math.min(bitmapWidth - cropWidth, Math.max(0, rect.centerX() - midCropWidth));
+                      int y = Math.min(bitmapHeight - cropHeight, Math.max(0, rect.centerY() - midCropHeight));
+                      float xScale = (float) inputSize / (float) cropWidth;
+                      float yScale = (float) inputSize / (float) cropHeight;
+                      Matrix matrix = new Matrix();
+                      matrix.postScale(xScale, yScale);
+                      Bitmap faceBitmap = Bitmap.createBitmap(bitmap, x, y, cropWidth, cropHeight, matrix, true);
+                      ByteBuffer faceByteBuffer = convertBitmapToByteBuffer(faceBitmap);
+                      faceBitmap.recycle();
+                      float[][] result = new float[1][2];
+                      genderModel.run(faceByteBuffer, result);
+                      JSObject resFace = new JSObject();
+                      resFace.put("x", x);
+                      resFace.put("y", y);
+                      resFace.put("width", width);
+                      resFace.put("height", height);
+                      JSObject resGender = new JSObject();
+                      resGender.put("male", result[0][0]);
+                      resGender.put("female", result[0][1]);
+                      resFace.put("gender", resGender);
+                      resFaces.put(resFace);
+                      Log.d("FaceRecPlugin", String.format("Face (%d,%d,%d,%d) - Female %.4f Male %.4f", x, y, width, height, result[0][1], result[0][0]));
 
-                    linePaint.setColor(getColor(result[0][0], result[0][1]));
-                    taggedCanvas.drawRoundRect(rect.left, rect.top, rect.right, rect.bottom, lineWidth, lineWidth, linePaint);
+                      linePaint.setColor(getColor(result[0][0], result[0][1]));
+                      taggedCanvas.drawRoundRect(rect.left, rect.top, rect.right, rect.bottom, lineWidth, lineWidth, linePaint);
+                    }
                 }
             } else {
-                Bitmap faceBitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight());
+                Rect rect = new Rect(0, 0, bitmap.getWidth(), bitmap.getHeight());
+                int width = rect.width();
+                int height = rect.height();
+                int size = Math.max(width, height);
+                int cropWidth = Math.min(bitmapWidth, size);
+                int cropHeight = Math.min(bitmapHeight, size);
+                int midCropWidth = Math.round(cropWidth / 2);
+                int midCropHeight = Math.round(cropHeight / 2);
+                int x = Math.min(bitmapWidth - cropWidth, Math.max(0, rect.centerX() - midCropWidth));
+                int y = Math.min(bitmapHeight - cropHeight, Math.max(0, rect.centerY() - midCropHeight));
+                float xScale = (float)inputSize / (float)cropWidth;
+                float yScale = (float)inputSize / (float)cropHeight;
+                Matrix matrix = new Matrix();
+                matrix.postScale(xScale, yScale);
+                Bitmap faceBitmap = Bitmap.createBitmap(bitmap, x, y, cropWidth, cropHeight, matrix, true);
                 ByteBuffer faceByteBuffer = convertBitmapToByteBuffer(faceBitmap);
                 float[][] result = new float[1][2];
                 genderModel.run(faceByteBuffer, result);
@@ -433,6 +450,10 @@ public class FaceRec extends Plugin {
                 resGender.put("female", result[0][1]);
                 resFace.put("gender", resGender);
                 resFaces.put(resFace);
+                Log.d("FaceRecPlugin", String.format("Face (%d,%d,%d,%d) - Female %.4f Male %.4f", x, y, width, height, result[0][1], result[0][0]));
+
+                linePaint.setColor(getColor(result[0][0], result[0][1]));
+                taggedCanvas.drawRoundRect(rect.left, rect.top, rect.right, rect.bottom, lineWidth, lineWidth, linePaint);
             }
 
             JSObject result = new JSObject();
